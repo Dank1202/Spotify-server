@@ -5,11 +5,22 @@ const cors = require("cors");
 
 const app = express();
 app.use(cors());
+app.use(express.json());
 
-const CLIENT_ID = process.env.CLIENT_ID;
-const CLIENT_SECRET = process.env.CLIENT_SECRET;
-const REDIRECT_URI = process.env.REDIRECT_URI;
+/* =========================
+   ENV (limpio y seguro)
+========================= */
+const CLIENT_ID = process.env.CLIENT_ID?.trim();
+const CLIENT_SECRET = process.env.CLIENT_SECRET?.trim();
+const REDIRECT_URI = process.env.REDIRECT_URI?.trim();
 
+if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI) {
+    console.log("❌ Faltan variables de entorno");
+}
+
+/* =========================
+   TOKENS EN MEMORIA
+========================= */
 let access_token = "";
 let refresh_token = "";
 
@@ -21,12 +32,14 @@ app.get("/", (req, res) => {
 });
 
 /* =========================
-   CALLBACK (LOGIN SPOTIFY)
+   LOGIN CALLBACK
 ========================= */
 app.get("/callback", async (req, res) => {
     const code = req.query.code;
 
-    if (!code) return res.send("No code recibido");
+    if (!code) {
+        return res.status(400).send("No code recibido");
+    }
 
     try {
         const response = await axios.post(
@@ -41,7 +54,7 @@ app.get("/callback", async (req, res) => {
                     "Content-Type": "application/x-www-form-urlencoded",
                     Authorization:
                         "Basic " +
-                        Buffer.from(CLIENT_ID + ":" + CLIENT_SECRET).toString("base64")
+                        Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64")
                 }
             }
         );
@@ -49,13 +62,19 @@ app.get("/callback", async (req, res) => {
         access_token = response.data.access_token;
         refresh_token = response.data.refresh_token;
 
-        console.log("✅ ACCESS TOKEN:", access_token);
-        console.log("🔄 REFRESH TOKEN:", refresh_token);
+        console.log("✅ LOGIN EXITOSO");
+        console.log("ACCESS TOKEN:", access_token);
+        console.log("REFRESH TOKEN:", refresh_token);
 
-        res.send("Login exitoso 🎵 ya puedes cerrar esta ventana");
+        res.send("Login exitoso 🎵 puedes cerrar esta ventana");
     } catch (err) {
+        console.log("❌ ERROR CALLBACK:");
         console.log(err.response?.data || err.message);
-        res.send("Error en autenticación");
+
+        res.status(500).json({
+            error: "auth_failed",
+            details: err.response?.data || err.message
+        });
     }
 });
 
@@ -77,7 +96,7 @@ async function refreshAccessToken() {
                     "Content-Type": "application/x-www-form-urlencoded",
                     Authorization:
                         "Basic " +
-                        Buffer.from(CLIENT_ID + ":" + CLIENT_SECRET).toString("base64")
+                        Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64")
                 }
             }
         );
@@ -85,7 +104,8 @@ async function refreshAccessToken() {
         access_token = response.data.access_token;
         console.log("🔄 Token actualizado");
     } catch (err) {
-        console.log("Refresh error:", err.response?.data || err.message);
+        console.log("❌ ERROR REFRESH:");
+        console.log(err.response?.data || err.message);
     }
 }
 
@@ -94,7 +114,10 @@ async function refreshAccessToken() {
 ========================= */
 app.get("/song", async (req, res) => {
     if (!access_token) {
-        return res.json({ error: "No autenticado aún" });
+        return res.json({
+            error: "not_authenticated",
+            message: "Primero haz login con /authorize"
+        });
     }
 
     try {
@@ -121,18 +144,36 @@ app.get("/song", async (req, res) => {
 
         res.json(song);
     } catch (err) {
-        res.json({ error: "Error obteniendo canción" });
+        console.log("❌ ERROR SONG:");
+        console.log(err.response?.data || err.message);
+
+        res.status(500).json({
+            error: "song_error",
+            details: err.response?.data || err.message
+        });
     }
 });
 
-/* ========================= */
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Servidor corriendo en puerto ${PORT}`);
+/* =========================
+   HEALTH CHECK
+========================= */
+app.get("/health", (req, res) => {
+    res.json({
+        status: "ok",
+        authenticated: !!access_token
+    });
 });
 
 /* =========================
-   AUTO REFRESH
+   SERVER START
+========================= */
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+});
+
+/* =========================
+   AUTO REFRESH TOKEN
 ========================= */
 setInterval(refreshAccessToken, 1000 * 60 * 50);
